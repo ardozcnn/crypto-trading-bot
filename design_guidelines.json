@@ -1,0 +1,121 @@
+{
+  "project_name": "Binance Testnet Trading Bot Dashboard",
+  "theme": "dark",
+  "archetype": "THE PERFORMANCE PRO / TERMINAL BLEND",
+  "design_philosophy": "High-density, tactical terminal designed for fast-paced scalping and grid trading. Focus on data visibility, zero-latency feel, and professional grade aesthetics. 'Intelligent density'—show more information but keep the hierarchy clear.",
+  "typography": {
+    "headings": {
+      "family": "Cabinet Grotesk",
+      "fallback": "sans-serif",
+      "instruction": "Use Cabinet Grotesk for all module titles, panel headers, and stats cards. Use 'tracking-tight' for a sharp, technical look. NO INTER for headers."
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "fallback": "sans-serif",
+      "instruction": "Clean, highly legible body text for labels and general UI."
+    },
+    "numbers": {
+      "family": "JetBrains Mono",
+      "fallback": "monospace",
+      "instruction": "MANDATORY for all numerical values: PnL, Prices, Percentages, Timestamps, Quantities. Add 'tabular-nums' class to all numerical spans to prevent width jitter during live updates."
+    }
+  },
+  "colors": {
+    "background": {
+      "base": "#09090b",
+      "surface": "#121214",
+      "elevated": "#18181b",
+      "tooltip": "#27272a"
+    },
+    "accent": {
+      "primary": "#00F0FF",
+      "primary_hover": "#08D9E6",
+      "secondary": "#7000FF",
+      "profit": "#10b981",
+      "profit_bg": "rgba(16, 185, 129, 0.1)",
+      "loss": "#ef4444",
+      "loss_bg": "rgba(239, 68, 68, 0.1)"
+    },
+    "text": {
+      "primary": "#ffffff",
+      "secondary": "#a1a1aa",
+      "muted": "#71717a"
+    },
+    "borders": {
+      "default": "rgba(255, 255, 255, 0.08)",
+      "active": "rgba(0, 240, 255, 0.4)",
+      "grid": "rgba(255, 255, 255, 0.04)"
+    }
+  },
+  "layouts": {
+    "strategy": "High Density Grid (Mode B)",
+    "description": "Dense layout utilizing almost 100% of the screen real-estate. Zero dead space. Grid borders exposed.",
+    "container": "min-h-screen bg-[#09090b] text-white flex flex-col font-sans",
+    "structure": {
+      "top_nav": "h-14 border-b border-white/10 flex items-center justify-between px-4 bg-[#121214]",
+      "ticker_strip": "h-10 border-b border-white/5 bg-[#09090b] flex items-center overflow-hidden text-xs font-mono",
+      "main_workspace": "flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4",
+      "chart_panel": "col-span-1 lg:col-span-8 flex flex-col rounded-sm border border-white/10 bg-[#121214] overflow-hidden",
+      "control_panel": "col-span-1 lg:col-span-4 flex flex-col rounded-sm border border-white/10 bg-[#121214] overflow-hidden",
+      "stats_cards": "col-span-1 lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-4",
+      "bottom_panel": "col-span-1 lg:col-span-8 flex flex-col rounded-sm border border-white/10 bg-[#121214] overflow-hidden h-96",
+      "activity_log": "col-span-1 lg:col-span-4 flex flex-col rounded-sm border border-white/10 bg-[#121214] overflow-hidden h-96"
+    }
+  },
+  "components_instructions": {
+    "cards": "Cardless or 'Technical Look' with visible grid borders. Sharp corners (`rounded-none` or max `rounded-sm`). 1px solid stroke (`border-white/10`). Never use generic soft shadows; use `shadow-none`.",
+    "tables": "High density, text-xs. Use Shadcn Table. Numbers must be right-aligned using tabular-nums. Use sticky headers.",
+    "buttons": "Sharp, rectangular (`rounded-sm`). High contrast hover states. Electric cyan (`bg-[#00F0FF] text-black`) for the main 'Start Bot' CTA. Red (`bg-red-500 text-white`) for 'Stop/Kill Switch'.",
+    "inputs": "Shadcn Form/Input. Dark background (`bg-[#09090b]`), 1px border. Focus state must glow with primary accent (`focus-visible:ring-[#00F0FF]/50`).",
+    "tabs": "Shadcn Tabs. Override `h-9` to `h-auto`. Use technical style: transparent background, active state has a bright cyan bottom border.",
+    "charts": "Use Recharts for Equity Curve/PnL chart. Use a dark theme palette for the chart tooltip. For candlesticks, use an Area Chart in Recharts to mock the look if TradingView Lightweight Charts is unavailable.",
+    "indicators": "Use pill badges (`rounded-full px-2 py-0.5 text-[10px] uppercase font-mono`) to show RSI/MACD states."
+  },
+  "visual_enhancers": {
+    "glow_effects": "Use subtle `drop-shadow-[0_0_8px_rgba(0,240,255,0.4)]` for the active 'Bot Running' pulse indicator.",
+    "glassmorphism": "DO NOT USE. Medical/Financial apps require Flat Solid surfaces to prevent visual refraction of data. Use `#121214` solid background.",
+    "textures": "Add a very faint repeating linear gradient or dotted background pattern (`bg-grid-white/[0.02]`) to empty areas to maintain the terminal aesthetic."
+  },
+  "motion": {
+    "micro_interactions": "Fast, precise. 150ms transitions. Button hover should feel immediate.",
+    "data_updates": "Framer Motion layout animations for the activity log (new logs slide down from top). Flash green/red briefly when prices update."
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 ratio. Muted text should not be darker than `#71717a` against `#121214`.",
+    "focus": "Clear focus rings on all inputs.",
+    "data_testid": "MANDATORY. Format: `data-testid='[role]-[context]'`. Examples: `data-testid='bot-start-button'`, `data-testid='symbol-selector'`, `data-testid='position-row'`."
+  },
+  "localization": {
+    "language": "Turkish (tr-TR)",
+    "dictionary": {
+      "start_bot": "Botu Başlat",
+      "stop_bot": "Botu Durdur",
+      "positions": "Açık Pozisyonlar",
+      "trade_history": "İşlem Geçmişi",
+      "pnl": "Kâr/Zarar (PnL)",
+      "leverage": "Kaldıraç",
+      "equity_curve": "Bakiye Eğrisi",
+      "bot_control": "Bot Kontrol Paneli",
+      "strategy_config": "Strateji Ayarları",
+      "activity_log": "Sinyal / Bot Logları",
+      "daily_pnl": "Günlük PnL",
+      "win_rate": "Kazanma Oranı",
+      "balance": "Hesap Bakiyesi",
+      "grid_trading": "Grid İşlemleri"
+    }
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You MUST use JetBrains Mono or Roboto Mono for all financial numbers and percentages.",
+    "You MUST apply 'tabular-nums' class to all numerical spans to prevent width jitter.",
+    "You MUST NOT center align the app container. Trading terminals are full-width, left-aligned.",
+    "Prioritize using pre-existing components from src/components/ui.",
+    "Include a `data-testid` on all key UI elements (buttons, inputs, tabs, table rows).",
+    "Use Phosphor Icons or Lucide React for crisp, technical icons.",
+    "The UI text MUST be in Turkish as per user request. Do not leave English placeholder text for content.",
+    "Ensure dark mode is fully enforced, with no unreadable low-contrast text.",
+    "Do not use transparent backgrounds for dropdowns or modals."
+  ],
+  "libraries_to_install": [
+    "yarn add recharts @phosphor-icons/react clsx tailwind-merge framer-motion sonner lucide-react"
+  ]
+}
