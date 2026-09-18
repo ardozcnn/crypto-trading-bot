@@ -29,7 +29,7 @@ export const TopNav = ({ status, onChange }) => {
         </div>
         <div className="leading-tight">
           <div className="font-display font-extrabold tracking-tight text-base">SCALPX <span className="text-[#00F0FF]">TERMINAL</span></div>
-          <div className="text-[10px] font-mono text-zinc-500 uppercase">{status?.mode || "PAPER · FUTURES TESTNET"}</div>
+          <div className={`text-[10px] font-mono uppercase ${status?.live ? "text-red-400 font-bold" : "text-zinc-500"}`} data-testid="mode-label">{status?.live ? "● " : ""}{status?.mode || "PAPER · FUTURES TESTNET"}</div>
         </div>
       </div>
       <div className="flex items-center gap-4">

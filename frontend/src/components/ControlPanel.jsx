@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SymbolPicker } from "@/components/SymbolPicker";
+import { LiveSettings } from "@/components/LiveSettings";
 
 const Field = ({ label, id, value, onChange, step = "0.01", suffix }) => (
   <div className="space-y-1">
@@ -72,8 +73,8 @@ export const ControlPanel = ({ config, onChange }) => {
       </div>
       <Tabs defaultValue="general" className="flex-1 flex flex-col">
         <TabsList className="h-auto bg-transparent rounded-none p-0 border-b border-white/10 w-full justify-start">
-          {[["general", "Genel"], ["risk", "Risk"], ["filters", "Filtreler"], ["indicators", "Göstergeler"], ["grid", "Grid"]].map(([v, l]) => (
-            <TabsTrigger key={v} value={v} data-testid={`cfg-tab-${v}`} className="rounded-none border-b-2 border-transparent data-[state=active]:border-[#00F0FF] data-[state=active]:bg-transparent data-[state=active]:text-white text-zinc-400 text-xs px-3 py-2">{l}</TabsTrigger>
+          {[["general", "Genel"], ["risk", "Risk"], ["filters", "Filtreler"], ["indicators", "Göstergeler"], ["grid", "Grid"], ["live", "Canlı"]].map(([v, l]) => (
+            <TabsTrigger key={v} value={v} data-testid={`cfg-tab-${v}`} className={`rounded-none border-b-2 border-transparent data-[state=active]:border-[#00F0FF] data-[state=active]:bg-transparent data-[state=active]:text-white text-xs px-3 py-2 ${v === "live" && c.mode === "live" ? "text-red-400" : "text-zinc-400"}`}>{l}</TabsTrigger>
           ))}
         </TabsList>
         <div className="p-3 space-y-4 overflow-auto scroll-thin flex-1">
@@ -167,6 +168,9 @@ export const ControlPanel = ({ config, onChange }) => {
             </div>
             <SymbolPicker label="Grid Pariteleri" all={allSymbols} selected={c.grid.symbols} onChange={(v) => setGrid("symbols", v)} testId="grid-symbols" />
             <p className="text-[10px] text-zinc-500 leading-relaxed">Fiyat merkezin altındaki her seviyeyi aşağı kestiğinde LONG, üstündeki seviyeyi yukarı kestiğinde SHORT açılır; hedef bir sonraki seviyedir. Fiyat bant dışına çıkarsa grid yeniden merkezlenir.</p>
+          </TabsContent>
+          <TabsContent value="live" className="m-0">
+            <LiveSettings onChange={onChange} />
           </TabsContent>
         </div>
       </Tabs>

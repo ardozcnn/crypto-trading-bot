@@ -4,12 +4,14 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from market import MarketData
+from live import LiveClient, LiveError
 import indicators
 import strategies
 
 logger = logging.getLogger("engine")
 
 DEFAULT_CONFIG = {
+    "mode": "paper",
     "strategy": "both",
     "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"],
     "timeframe": "1m",
@@ -60,6 +62,7 @@ class BotEngine:
     def __init__(self, db):
         self.db = db
         self.market = MarketData()
+        self.live = LiveClient(db)
         self.config = dict(DEFAULT_CONFIG)
         self.running = False
         self.balance = DEFAULT_CONFIG["initial_balance"]
@@ -86,6 +89,7 @@ class BotEngine:
 
     # ---------- persistence ----------
     async def load(self):
+        await self.live.load()
         st = await self.db.bot_state.find_one({"_id": "state"})
         if st:
             self.config = merge(DEFAULT_CONFIG, st.get("config", {}))
@@ -187,6 +191,22 @@ class BotEngine:
                 await self.log("error", f"Döngü hatası: {e}")
             await asyncio.sleep(self.loop_interval)
 
+    @property
+    def is_live(self) -> bool:
+        return self.config.get("mode") == "live" and self.live.configured
+
+    def mode_label(self) -> str:
+        return "LIVE · FUTURES TESTNET" if self.is_live else "PAPER · FUTURES TESTNET"
+
+    async def set_mode(self, mode: str):
+        if mode == "live" and not self.live.configured:
+            raise LiveError("Önce Binance Testnet API anahtarını kaydet")
+        if mode == "live":
+            await self.live.refresh_account()
+        self.config["mode"] = mode
+        await self.save_state()
+        await self.log("warn" if mode == "live" else "info", f"Mod değiştirildi → {self.mode_label()}")
+
     async def tick(self):
         self._tick += 1
         now = datetime.now(timezone.utc)
@@ -198,6 +218,11 @@ class BotEngine:
             await self.refresh_signals(symbols)
         if self._tick % 8 == 1:
             await self.market.fetch_tickers(symbols)
+            if self.is_live:
+                try:
+                    await self.live.refresh_account()
+                except LiveError as e:
+                    logger.warning("live account refresh failed: %s", e)
         if self.running:
             if self._last_tick_ts:
                 self.total_active_sec += min((now - self._last_tick_ts).total_seconds(), 60)
@@ -277,24 +302,51 @@ class BotEngine:
             await self.log("warn", f"Yetersiz bakiye, pozisyon açılamadı ({margin:.2f} USDT)", symbol)
             return None
         notional = margin * lev
+        qty, live_order = notional / price, None
+        if self.is_live:
+            try:
+                live_order = await self.live.market_order(symbol, "BUY" if side == "LONG" else "SELL", qty, leverage=lev)
+            except LiveError as e:
+                await self.log("error", f"CANLI emir hatası: {e}", symbol)
+                self.cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(seconds=max(60, self.config["cooldown_seconds"]))
+                return None
+            price, qty = live_order["price"], live_order["qty"]
+            notional = price * qty
+            margin = notional / lev
+            fee = notional * self.config["fee_pct"] / 100
+            d = 1 if side == "LONG" else -1
+            tp = price + abs(tp - price) * d if tp else tp
+            sl = price - abs(price - sl) * d if sl else sl
         pos = {
             "id": str(uuid.uuid4()), "symbol": symbol, "side": side, "strategy": strategy,
-            "entry_price": price, "qty": notional / price, "margin": margin, "leverage": lev, "notional": notional,
+            "entry_price": price, "qty": qty, "margin": margin, "leverage": lev, "notional": notional,
             "tp": tp, "sl": sl, "trailing_sl": None, "peak": price, "opened_at": now_iso(), "reason": reason,
-            "fee_open": fee, "grid_key": grid_key,
+            "fee_open": fee, "grid_key": grid_key, "live": bool(live_order), "order_id": live_order["order_id"] if live_order else None,
         }
         self.balance -= margin + fee
         self.positions[pos["id"]] = pos
         await self.db.positions.insert_one(dict(pos))
         await self.save_state()
-        await self.log("trade", f"{'▲ LONG' if side == 'LONG' else '▼ SHORT'} açıldı @ {price:g} · marj {margin:.2f} USDT · {lev}x · {reason}", symbol,
-                       {"side": side, "price": price, "strategy": strategy})
+        tag = "CANLI " if live_order else ""
+        await self.log("trade", f"{tag}{'▲ LONG' if side == 'LONG' else '▼ SHORT'} açıldı @ {price:g} · marj {margin:.2f} USDT · {lev}x · {reason}", symbol,
+                       {"side": side, "price": price, "strategy": strategy, "live": bool(live_order)})
         return pos
+
+    async def live_close(self, pos: dict, qty: float, fallback_price: float) -> float:
+        if not pos.get("live") or not self.is_live:
+            return fallback_price
+        try:
+            res = await self.live.market_order(pos["symbol"], "SELL" if pos["side"] == "LONG" else "BUY", qty, reduce_only=True)
+            return res["price"]
+        except LiveError as e:
+            await self.log("error", f"CANLI kapatma hatası: {e} · kayıt piyasa fiyatıyla kapatıldı", pos["symbol"])
+            return fallback_price
 
     async def close_position(self, pos_id: str, price: float, exit_reason: str):
         pos = self.positions.pop(pos_id, None)
         if not pos:
             return None
+        price = await self.live_close(pos, pos["qty"], price)
         gross = self.unrealized(pos, price)
         fee_close = price * pos["qty"] * self.config["fee_pct"] / 100
         net = gross - fee_close - pos["fee_open"]
@@ -333,6 +385,14 @@ class BotEngine:
     async def partial_close(self, pos: dict, price: float):
         frac = self.config["partial_tp_fraction"]
         qty_c, margin_c = pos["qty"] * frac, pos["margin"] * frac
+        if pos.get("live") and self.is_live:
+            try:
+                await self.live.normalize_qty(pos["symbol"], qty_c)
+                await self.live.normalize_qty(pos["symbol"], pos["qty"] - qty_c)
+            except LiveError:
+                pos["partial_done"] = True
+                return
+            price = await self.live_close(pos, qty_c, price)
         d = 1 if pos["side"] == "LONG" else -1
         gross = (price - pos["entry_price"]) * qty_c * d
         fee_close = price * qty_c * self.config["fee_pct"] / 100
@@ -514,6 +574,27 @@ class BotEngine:
             "blacklist": [{"symbol": s, "until": u, "streak": self.loss_streak.get(s, 0)} for s, u in list(self.blacklist.items()) if self.is_blacklisted(s)],
             "loss_streak": self.loss_streak,
         }
+
+    def daily_report(self) -> list[dict]:
+        days: dict[str, dict] = {}
+        for t in self.trades:
+            d = t["closed_at"][:10]
+            row = days.setdefault(d, {"date": d, "trades": 0, "wins": 0, "pnl": 0.0, "grid_pnl": 0.0, "multi_pnl": 0.0, "fees": 0.0, "best": 0.0, "worst": 0.0})
+            row["trades"] += 1
+            row["wins"] += t["pnl"] > 0
+            row["pnl"] += t["pnl"]
+            row[f"{t['strategy']}_pnl"] += t["pnl"]
+            row["fees"] += t.get("fee_total", 0)
+            row["best"] = max(row["best"], t["pnl"])
+            row["worst"] = min(row["worst"], t["pnl"])
+        out = []
+        cum = 0.0
+        for d in sorted(days):
+            r = days[d]
+            cum += r["pnl"]
+            out.append({**{k: round(v, 2) if isinstance(v, float) else v for k, v in r.items()},
+                        "win_rate": round(r["wins"] / r["trades"] * 100, 1), "cumulative": round(cum, 2)})
+        return list(reversed(out))
 
     def stats(self) -> dict:
         today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()

@@ -17,4 +17,12 @@ export const api = {
     axios.get(`${API}/market/klines`, { params: { symbol, interval, limit } }).then((r) => r.data),
   closePosition: (id) => axios.post(`${API}/positions/${id}/close`).then((r) => r.data),
   closeAll: () => axios.post(`${API}/positions/close-all`).then((r) => r.data),
+  dailyReport: () => axios.get(`${API}/report/daily`).then((r) => r.data),
+  backtestRun: (days = 30) => axios.post(`${API}/backtest/run`, { days }).then((r) => r.data),
+  backtestStatus: () => axios.get(`${API}/backtest/status`).then((r) => r.data),
+  liveStatus: () => axios.get(`${API}/live/status`).then((r) => r.data),
+  liveSaveCredentials: (api_key, api_secret) => axios.post(`${API}/live/credentials`, { api_key, api_secret }).then((r) => r.data),
+  liveDeleteCredentials: () => axios.delete(`${API}/live/credentials`).then((r) => r.data),
+  liveTest: () => axios.post(`${API}/live/test`).then((r) => r.data),
+  liveMode: (mode) => axios.post(`${API}/live/mode`, { mode }).then((r) => r.data),
 };

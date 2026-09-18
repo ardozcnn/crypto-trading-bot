@@ -13,6 +13,8 @@ import { ActivityLog } from "@/components/ActivityLog";
 import { EquityChart } from "@/components/EquityChart";
 import { SignalsPanel } from "@/components/SignalsPanel";
 import { PerformancePanel } from "@/components/PerformancePanel";
+import { DailyReport } from "@/components/DailyReport";
+import { BacktestPanel } from "@/components/BacktestPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 function App() {
@@ -52,6 +54,12 @@ function App() {
                 <TabsTrigger data-testid="tab-equity" value="equity" className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-[#00F0FF] data-[state=active]:bg-transparent data-[state=active]:text-white text-zinc-400 px-4 text-xs font-display font-bold uppercase tracking-tight">
                   Bakiye Eğrisi
                 </TabsTrigger>
+                <TabsTrigger data-testid="tab-daily" value="daily" className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-[#00F0FF] data-[state=active]:bg-transparent data-[state=active]:text-white text-zinc-400 px-4 text-xs font-display font-bold uppercase tracking-tight">
+                  Günlük Rapor
+                </TabsTrigger>
+                <TabsTrigger data-testid="tab-backtest" value="backtest" className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-[#00F0FF] data-[state=active]:bg-transparent data-[state=active]:text-white text-zinc-400 px-4 text-xs font-display font-bold uppercase tracking-tight">
+                  Backtest
+                </TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="positions" className="flex-1 m-0 overflow-auto scroll-thin">
@@ -62,6 +70,12 @@ function App() {
             </TabsContent>
             <TabsContent value="equity" className="flex-1 m-0 p-2">
               <EquityChart equity={equity || []} initial={config?.initial_balance} />
+            </TabsContent>
+            <TabsContent value="daily" className="flex-1 m-0 overflow-auto scroll-thin">
+              <DailyReport refreshKey={trades?.length} />
+            </TabsContent>
+            <TabsContent value="backtest" className="flex-1 m-0 overflow-hidden">
+              <BacktestPanel />
             </TabsContent>
           </Tabs>
         </div>
