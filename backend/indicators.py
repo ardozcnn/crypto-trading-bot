@@ -37,9 +37,39 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.ewm(alpha=1 / period, adjust=False).mean()
 
 
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    up = df["h"].diff()
+    down = -df["l"].diff()
+    plus_dm = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=df.index)
+    minus_dm = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=df.index)
+    tr = atr(df, period)
+    plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / tr.replace(0, np.nan)
+    minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / tr.replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return dx.ewm(alpha=1 / period, adjust=False).mean().fillna(0)
+
+
+def htf_trend(klines: list[dict], ema_period: int = 50) -> dict:
+    df = pd.DataFrame(klines)
+    e = ema(df["c"], ema_period)
+    last, slope_ref = float(e.iloc[-1]), float(e.iloc[-4])
+    close = float(df["c"].iloc[-1])
+    slope_pct = (last - slope_ref) / slope_ref * 100
+    if close > last and slope_pct > -0.02:
+        trend = "UP"
+    elif close < last and slope_pct < 0.02:
+        trend = "DOWN"
+    else:
+        trend = "FLAT"
+    return {"trend": trend, "ema": last, "close": close, "slope_pct": round(slope_pct, 4)}
+
+
 def compute(klines: list[dict], p: dict) -> dict:
     df = pd.DataFrame(klines)
     c = df["c"]
+    adx_series = adx(df, 14)
+    vol_avg = df["v"].iloc[-22:-2].mean()
+    vol_ratio = float(df["v"].iloc[-2] / vol_avg) if vol_avg and not np.isnan(vol_avg) else 1.0
     df["ema_fast"] = ema(c, p["ema_fast"])
     df["ema_slow"] = ema(c, p["ema_slow"])
     df["rsi"] = rsi(c, p["rsi_period"])
@@ -68,4 +98,6 @@ def compute(klines: list[dict], p: dict) -> dict:
         "ema_fast_prev": float(prev["ema_fast"]),
         "ema_slow_prev": float(prev["ema_slow"]),
         "atr": float(last["atr"]) if last["atr"] is not None else 0.0,
+        "adx": round(float(adx_series.iloc[-1]), 2),
+        "vol_ratio": round(vol_ratio, 2),
     }

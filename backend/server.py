@@ -58,6 +58,14 @@ class GridConfig(BaseModel):
     symbols: Optional[List[str]] = None
 
 
+class FilterConfig(BaseModel):
+    htf_trend: Optional[bool] = None
+    htf_timeframe: Optional[str] = None
+    htf_ema: Optional[int] = None
+    adx_min: Optional[float] = None
+    volume_min_ratio: Optional[float] = None
+
+
 class ConfigPatch(BaseModel):
     strategy: Optional[str] = None
     symbols: Optional[List[str]] = None
@@ -74,6 +82,15 @@ class ConfigPatch(BaseModel):
     cooldown_seconds: Optional[int] = None
     min_score: Optional[float] = None
     initial_balance: Optional[float] = None
+    atr_tp_sl: Optional[bool] = None
+    atr_tp_mult: Optional[float] = None
+    atr_sl_mult: Optional[float] = None
+    partial_tp: Optional[bool] = None
+    partial_tp_fraction: Optional[float] = None
+    daily_loss_limit_pct: Optional[float] = None
+    blacklist_losses: Optional[int] = None
+    blacklist_minutes: Optional[int] = None
+    filters: Optional[FilterConfig] = None
     indicators: Optional[IndicatorConfig] = None
     grid: Optional[GridConfig] = None
 

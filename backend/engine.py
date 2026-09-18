@@ -23,14 +23,23 @@ DEFAULT_CONFIG = {
     "trailing_distance_pct": 0.15,
     "max_hold_minutes": 45,
     "cooldown_seconds": 45,
-    "min_score": 2.0,
+    "min_score": 2.5,
+    "filters": {"htf_trend": True, "htf_timeframe": "15m", "htf_ema": 50, "adx_min": 20.0, "volume_min_ratio": 0.8},
+    "atr_tp_sl": True,
+    "atr_tp_mult": 1.5,
+    "atr_sl_mult": 1.0,
+    "partial_tp": True,
+    "partial_tp_fraction": 0.5,
+    "daily_loss_limit_pct": 3.0,
+    "blacklist_losses": 3,
+    "blacklist_minutes": 120,
     "indicators": {
         "rsi_period": 14, "rsi_buy": 35, "rsi_sell": 65,
         "ema_fast": 9, "ema_slow": 21,
         "bb_period": 20, "bb_std": 2.0,
         "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
     },
-    "grid": {"levels": 4, "spacing_pct": 0.25, "size_pct": 2.5, "symbols": ["BTCUSDT", "ETHUSDT"]},
+    "grid": {"levels": 6, "spacing_pct": 0.25, "size_pct": 2.5, "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]},
     "initial_balance": 10000.0,
     "fee_pct": 0.04,
 }
@@ -62,6 +71,14 @@ class BotEngine:
         self.grids: dict[str, dict] = {}
         self.cooldowns: dict[str, datetime] = {}
         self.last_prices: dict[str, float] = {}
+        self.htf: dict[str, dict] = {}
+        self.loss_streak: dict[str, int] = {}
+        self.blacklist: dict[str, str] = {}
+        self.day: dict = {"date": None, "start_equity": None, "halted": False}
+        self.first_started_at: str | None = None
+        self.total_active_sec = 0.0
+        self.session_started_at = now_iso()
+        self._last_tick_ts: datetime | None = None
         self._tick = 0
         self._last_equity_ts = None
         self._task = None
@@ -75,16 +92,34 @@ class BotEngine:
             self.balance = st.get("balance", self.balance)
             self.running = st.get("running", False)
             self.grids = st.get("grids", {})
+            self.blacklist = st.get("blacklist", {})
+            self.loss_streak = st.get("loss_streak", {})
+            self.day = st.get("day", self.day)
+            self.first_started_at = st.get("first_started_at")
+            self.total_active_sec = st.get("total_active_sec", 0.0)
         self.positions = {p["id"]: p async for p in self.db.positions.find({}, {"_id": 0})}
         self.trades = await self.db.trades.find({}, {"_id": 0}).sort("closed_at", -1).to_list(2000)
         self.logs = await self.db.logs.find({}, {"_id": 0}).sort("ts", -1).to_list(300)
         eq = await self.db.equity.find({}, {"_id": 0}).sort("t", -1).to_list(1500)
         self.equity = list(reversed(eq))
+        if st and "total_active_sec" not in st:
+            await self._backfill_uptime()
+
+    async def _backfill_uptime(self):
+        ts = [datetime.fromisoformat(e["t"]) async for e in self.db.equity.find({}, {"t": 1}).sort("t", 1)]
+        if ts:
+            self.first_started_at = ts[0].isoformat()
+            self.total_active_sec = sum(g for g in ((b - a).total_seconds() for a, b in zip(ts, ts[1:])) if g < 600)
+        await self.save_state()
 
     async def save_state(self):
         await self.db.bot_state.update_one(
             {"_id": "state"},
-            {"$set": {"config": self.config, "balance": self.balance, "running": self.running, "grids": self.grids}},
+            {"$set": {
+                "config": self.config, "balance": self.balance, "running": self.running, "grids": self.grids,
+                "blacklist": self.blacklist, "loss_streak": self.loss_streak, "day": self.day,
+                "first_started_at": self.first_started_at, "total_active_sec": self.total_active_sec,
+            }},
             upsert=True,
         )
 
@@ -104,6 +139,10 @@ class BotEngine:
         if self.running:
             return
         self.running = True
+        if not self.first_started_at:
+            self.first_started_at = now_iso()
+        self.session_started_at = now_iso()
+        self._last_tick_ts = None
         await self.save_state()
         await self.log("info", f"Bot başlatıldı · strateji={self.config['strategy']} · kaldıraç={self.config['leverage']}x")
 
@@ -117,6 +156,8 @@ class BotEngine:
         self.running = False
         self.balance = float(self.config["initial_balance"])
         self.positions, self.trades, self.logs, self.equity, self.grids, self.cooldowns = {}, [], [], [], {}, {}
+        self.blacklist, self.loss_streak = {}, {}
+        self.day = {"date": None, "start_equity": None, "halted": False}
         for col in ("positions", "trades", "logs", "equity"):
             await self.db[col].delete_many({})
         await self.save_state()
@@ -148,18 +189,63 @@ class BotEngine:
 
     async def tick(self):
         self._tick += 1
+        now = datetime.now(timezone.utc)
         symbols = self.all_symbols()
         prices = await self.market.fetch_prices(symbols)
+        if self._tick % 15 == 1:
+            await self.refresh_htf(symbols)
         if self._tick % 3 == 1:
             await self.refresh_signals(symbols)
         if self._tick % 8 == 1:
             await self.market.fetch_tickers(symbols)
         if self.running:
+            if self._last_tick_ts:
+                self.total_active_sec += min((now - self._last_tick_ts).total_seconds(), 60)
+            self._last_tick_ts = now
+            await self.roll_day(prices)
             await self.manage_positions(prices)
-            await self.evaluate_multi(prices)
-            await self.evaluate_grid(prices)
+            if not self.day["halted"]:
+                await self.evaluate_multi(prices)
+                await self.evaluate_grid(prices)
             await self.snapshot_equity(prices)
+        else:
+            self._last_tick_ts = None
         self.last_prices = dict(prices)
+
+    async def roll_day(self, prices: dict[str, float]):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.day.get("date") != today:
+            self.day = {"date": today, "start_equity": round(self.compute_equity(prices), 2), "halted": False}
+            await self.save_state()
+            return
+        limit = self.config["daily_loss_limit_pct"]
+        if limit and not self.day["halted"] and self.day.get("start_equity"):
+            dd = (self.compute_equity(prices) - self.day["start_equity"]) / self.day["start_equity"] * 100
+            if dd <= -limit:
+                self.day["halted"] = True
+                await self.save_state()
+                await self.log("error", f"GÜNLÜK ZARAR LİMİTİ ({limit:g}%) aşıldı · yeni işlem açılmayacak, gün sonunda (UTC) devam eder")
+
+    def is_blacklisted(self, symbol: str) -> bool:
+        until = self.blacklist.get(symbol)
+        if not until:
+            return False
+        if datetime.fromisoformat(until) <= datetime.now(timezone.utc):
+            self.blacklist.pop(symbol, None)
+            self.loss_streak[symbol] = 0
+            return False
+        return True
+
+    async def refresh_htf(self, symbols: set[str]):
+        f = self.config["filters"]
+        if not f.get("htf_trend"):
+            return
+        results = await asyncio.gather(
+            *[self.market.fetch_klines(s, f["htf_timeframe"], max(f["htf_ema"] + 10, 60), store=False) for s in symbols], return_exceptions=True
+        )
+        for s, res in zip(symbols, results):
+            if not isinstance(res, Exception) and len(res) >= f["htf_ema"] + 4:
+                self.htf[s] = indicators.htf_trend(res, f["htf_ema"])
 
     async def refresh_signals(self, symbols: set[str]):
         results = await asyncio.gather(
@@ -169,8 +255,9 @@ class BotEngine:
             if isinstance(res, Exception) or len(res) < 40:
                 continue
             ind = indicators.compute(res, self.config["indicators"])
-            sig = strategies.multi_signal(ind, self.config["indicators"], self.config["min_score"])
-            self.signals[s] = {"symbol": s, **{k: v for k, v in ind.items() if k != "series"}, **sig, "updated": now_iso()}
+            sig = strategies.multi_signal(ind, self.config["indicators"], self.config["min_score"], self.config["filters"], self.htf.get(s))
+            self.signals[s] = {"symbol": s, **{k: v for k, v in ind.items() if k != "series"}, **sig,
+                               "blacklisted": self.is_blacklisted(s), "updated": now_iso()}
 
     # ---------- position math ----------
     @staticmethod
@@ -224,11 +311,47 @@ class BotEngine:
             self.grids[pos["symbol"]]["filled"] = [k for k in self.grids[pos["symbol"]]["filled"] if k != pos["grid_key"]]
         await self.db.positions.delete_one({"id": pos_id})
         await self.db.trades.insert_one(dict(trade))
+        if pos["strategy"] == "multi":
+            await self.track_streak(pos["symbol"], net)
         await self.save_state()
         sign = "+" if net >= 0 else ""
         await self.log("win" if net >= 0 else "loss", f"{pos['side']} kapatıldı @ {price:g} · {exit_reason} · PnL {sign}{net:.2f} USDT ({sign}{trade['pnl_pct']:.1f}%)",
                        pos["symbol"], {"pnl": net, "reason": exit_reason})
         return trade
+
+    async def track_streak(self, symbol: str, net: float):
+        n = self.config["blacklist_losses"]
+        if net >= 0:
+            self.loss_streak[symbol] = 0
+            return
+        self.loss_streak[symbol] = self.loss_streak.get(symbol, 0) + 1
+        if n and self.loss_streak[symbol] >= n:
+            mins = self.config["blacklist_minutes"]
+            self.blacklist[symbol] = (datetime.now(timezone.utc) + timedelta(minutes=mins)).isoformat()
+            await self.log("warn", f"KARA LİSTE · arka arkaya {n} zarar → {mins} dk çoklu sinyal işlemi askıya alındı", symbol)
+
+    async def partial_close(self, pos: dict, price: float):
+        frac = self.config["partial_tp_fraction"]
+        qty_c, margin_c = pos["qty"] * frac, pos["margin"] * frac
+        d = 1 if pos["side"] == "LONG" else -1
+        gross = (price - pos["entry_price"]) * qty_c * d
+        fee_close = price * qty_c * self.config["fee_pct"] / 100
+        fee_open_c = pos["fee_open"] * frac
+        net = gross - fee_close - fee_open_c
+        self.balance += margin_c + gross - fee_close
+        pos.update({"qty": pos["qty"] - qty_c, "margin": pos["margin"] - margin_c, "notional": pos["notional"] * (1 - frac),
+                    "fee_open": pos["fee_open"] - fee_open_c, "partial_done": True, "sl": pos["entry_price"]})
+        trade = {
+            **pos, "qty": qty_c, "margin": margin_c, "exit_price": price, "pnl": round(net, 4),
+            "pnl_pct": round(net / margin_c * 100, 2), "fee_total": round(fee_close + fee_open_c, 4),
+            "closed_at": now_iso(), "exit_reason": "KISMİ TP", "id": str(uuid.uuid4()), "parent_id": pos["id"],
+            "duration_sec": int((datetime.now(timezone.utc) - datetime.fromisoformat(pos["opened_at"])).total_seconds()),
+        }
+        self.trades.insert(0, trade)
+        await self.db.positions.update_one({"id": pos["id"]}, {"$set": {k: pos[k] for k in ("qty", "margin", "notional", "fee_open", "partial_done", "sl")}})
+        await self.db.trades.insert_one(dict(trade))
+        await self.save_state()
+        await self.log("win", f"KISMİ TP · pozisyonun %{frac * 100:g}'i kapatıldı @ {price:g} · +{net:.2f} USDT · SL girişe çekildi", pos["symbol"], {"pnl": net, "reason": "KISMİ TP"})
 
     # ---------- management ----------
     async def manage_positions(self, prices: dict[str, float]):
@@ -251,6 +374,10 @@ class BotEngine:
                 await self.close_position(pos["id"], price, "STOP LOSS"); continue
 
             if pos["strategy"] == "multi":
+                if cfg["partial_tp"] and not pos.get("partial_done"):
+                    half_tp = pos["entry_price"] + (pos["tp"] - pos["entry_price"]) * 0.5
+                    if (long and price >= half_tp) or (not long and price <= half_tp):
+                        await self.partial_close(pos, price)
                 if cfg["trailing"] and fav_pct >= cfg["trailing_activation_pct"]:
                     dist = cfg["trailing_distance_pct"] / 100
                     new_sl = pos["peak"] * (1 - dist * d)
@@ -278,15 +405,27 @@ class BotEngine:
                 continue
             if self.cooldowns.get(symbol) and self.cooldowns[symbol] > now:
                 continue
+            if self.is_blacklisted(symbol):
+                continue
             sig, price = self.signals.get(symbol), prices.get(symbol)
             if not sig or not price or not sig["side"]:
                 continue
             d = 1 if sig["side"] == "LONG" else -1
-            tp = price * (1 + cfg["tp_pct"] / 100 * d)
-            sl = price * (1 - cfg["sl_pct"] / 100 * d)
+            tp_dist, sl_dist = price * cfg["tp_pct"] / 100, price * cfg["sl_pct"] / 100
+            mode = "sabit"
+            if cfg["atr_tp_sl"] and sig.get("atr"):
+                tp_dist = min(max(sig["atr"] * cfg["atr_tp_mult"], price * 0.002), price * 0.015)
+                sl_dist = min(max(sig["atr"] * cfg["atr_sl_mult"], price * 0.0015), price * 0.01)
+                if tp_dist < sl_dist * 1.2:
+                    tp_dist = sl_dist * 1.2
+                mode = "ATR"
+            tp = price + tp_dist * d
+            sl = price - sl_dist * d
             margin = self.balance * cfg["risk_per_trade_pct"] / 100
             votes = " ".join(f"{k.upper()}{'+' if v > 0 else ''}{v:g}" for k, v in sig["votes"].items() if v)
-            await self.open_position(symbol, sig["side"], price, margin, "multi", f"skor {sig['score']:+.1f} [{votes}]", tp, sl)
+            trend = f" · 15m {sig['htf_trend']}" if sig.get("htf_trend") else ""
+            await self.open_position(symbol, sig["side"], price, margin, "multi",
+                                     f"skor {sig['score']:+.1f} [{votes}]{trend} · ADX {sig.get('adx', 0):.0f} · {mode} TP/SL", tp, sl)
 
     async def evaluate_grid(self, prices: dict[str, float]):
         cfg = self.config
@@ -340,6 +479,42 @@ class BotEngine:
         return self.balance + sum(p["margin"] + self.unrealized(p, prices.get(p["symbol"], p["entry_price"])) for p in self.positions.values())
 
     # ---------- stats ----------
+    @staticmethod
+    def _perf(trades: list[dict]) -> dict:
+        wins = [t for t in trades if t["pnl"] > 0]
+        gw = sum(t["pnl"] for t in wins)
+        gl = abs(sum(t["pnl"] for t in trades if t["pnl"] <= 0))
+        return {
+            "trades": len(trades), "wins": len(wins), "losses": len(trades) - len(wins),
+            "pnl": round(sum(t["pnl"] for t in trades), 2),
+            "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else 0.0,
+            "profit_factor": round(gw / gl, 2) if gl else (round(gw, 2) if gw else 0.0),
+            "avg_pnl": round(sum(t["pnl"] for t in trades) / len(trades), 2) if trades else 0.0,
+        }
+
+    def uptime(self) -> dict:
+        now = datetime.now(timezone.utc)
+        session = (now - datetime.fromisoformat(self.session_started_at)).total_seconds() if self.running else 0
+        return {
+            "first_started_at": self.first_started_at,
+            "session_started_at": self.session_started_at if self.running else None,
+            "session_sec": int(session),
+            "total_active_sec": int(self.total_active_sec),
+            "calendar_days": round((now - datetime.fromisoformat(self.first_started_at)).total_seconds() / 86400, 1) if self.first_started_at else 0,
+        }
+
+    def protection(self) -> dict:
+        eq = self.compute_equity()
+        start = self.day.get("start_equity") or eq
+        return {
+            "daily_loss_limit_pct": self.config["daily_loss_limit_pct"],
+            "day_start_equity": start,
+            "day_change_pct": round((eq - start) / start * 100, 2) if start else 0.0,
+            "halted": self.day.get("halted", False),
+            "blacklist": [{"symbol": s, "until": u, "streak": self.loss_streak.get(s, 0)} for s, u in list(self.blacklist.items()) if self.is_blacklisted(s)],
+            "loss_streak": self.loss_streak,
+        }
+
     def stats(self) -> dict:
         today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         wins = [t for t in self.trades if t["pnl"] > 0]
@@ -367,4 +542,10 @@ class BotEngine:
             "worst_trade": round(min((t["pnl"] for t in self.trades), default=0.0), 2),
             "open_positions": len(self.positions),
             "margin_used": round(sum(p["margin"] for p in self.positions.values()), 2),
+            "by_strategy": {
+                "grid": self._perf([t for t in self.trades if t["strategy"] == "grid"]),
+                "multi": self._perf([t for t in self.trades if t["strategy"] == "multi"]),
+            },
+            "uptime": self.uptime(),
+            "protection": self.protection(),
         }

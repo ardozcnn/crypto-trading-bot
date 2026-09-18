@@ -12,6 +12,7 @@ import { TradesTable } from "@/components/TradesTable";
 import { ActivityLog } from "@/components/ActivityLog";
 import { EquityChart } from "@/components/EquityChart";
 import { SignalsPanel } from "@/components/SignalsPanel";
+import { PerformancePanel } from "@/components/PerformancePanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 function App() {
@@ -27,6 +28,9 @@ function App() {
       <main className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-3 p-3">
         <div className="xl:col-span-12">
           <StatsCards stats={status?.stats} running={status?.running} />
+        </div>
+        <div className="xl:col-span-12">
+          <PerformancePanel stats={status?.stats} running={status?.running} />
         </div>
         <div className="xl:col-span-8 flex flex-col gap-3">
           <ChartPanel symbol={symbol} setSymbol={setSymbol} symbols={config ? [...new Set([...config.symbols, ...config.grid.symbols])] : []} positions={status?.positions || []} />

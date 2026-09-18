@@ -20,6 +20,16 @@ const Field = ({ label, id, value, onChange, step = "0.01", suffix }) => (
   </div>
 );
 
+const Toggle = ({ id, title, desc, checked, onChange }) => (
+  <div className="flex items-center justify-between border border-white/10 rounded-sm p-2.5">
+    <div>
+      <div className="text-xs font-semibold">{title}</div>
+      <div className="text-[10px] text-zinc-500">{desc}</div>
+    </div>
+    <Switch data-testid={`cfg-${id}`} checked={!!checked} onCheckedChange={onChange} />
+  </div>
+);
+
 const STRATS = [
   { v: "both", l: "Çoklu Sinyal + Grid" },
   { v: "multi", l: "Çoklu Sinyal" },
@@ -37,6 +47,7 @@ export const ControlPanel = ({ config, onChange }) => {
   const set = (k, v) => setC({ ...c, [k]: v });
   const setInd = (k, v) => setC({ ...c, indicators: { ...c.indicators, [k]: v } });
   const setGrid = (k, v) => setC({ ...c, grid: { ...c.grid, [k]: v } });
+  const setF = (k, v) => setC({ ...c, filters: { ...c.filters, [k]: v } });
 
   const save = async () => {
     setSaving(true);
@@ -61,7 +72,7 @@ export const ControlPanel = ({ config, onChange }) => {
       </div>
       <Tabs defaultValue="general" className="flex-1 flex flex-col">
         <TabsList className="h-auto bg-transparent rounded-none p-0 border-b border-white/10 w-full justify-start">
-          {[["general", "Genel"], ["risk", "Risk"], ["indicators", "Göstergeler"], ["grid", "Grid"]].map(([v, l]) => (
+          {[["general", "Genel"], ["risk", "Risk"], ["filters", "Filtreler"], ["indicators", "Göstergeler"], ["grid", "Grid"]].map(([v, l]) => (
             <TabsTrigger key={v} value={v} data-testid={`cfg-tab-${v}`} className="rounded-none border-b-2 border-transparent data-[state=active]:border-[#00F0FF] data-[state=active]:bg-transparent data-[state=active]:text-white text-zinc-400 text-xs px-3 py-2">{l}</TabsTrigger>
           ))}
         </TabsList>
@@ -106,6 +117,35 @@ export const ControlPanel = ({ config, onChange }) => {
               <Field id="trailing_distance_pct" label="Trailing Mesafe" value={c.trailing_distance_pct} onChange={(v) => set("trailing_distance_pct", v)} step="0.05" suffix="%" />
             </div>
             <p className="text-[10px] text-zinc-500 leading-relaxed">TP/SL fiyat yüzdesidir. {c.leverage}x kaldıraçta {c.tp_pct}% TP ≈ marj üzerinde <span className="font-mono text-profit">+{(c.tp_pct * c.leverage).toFixed(1)}%</span>, {c.sl_pct}% SL ≈ <span className="font-mono text-loss">-{(c.sl_pct * c.leverage).toFixed(1)}%</span>.</p>
+            <Toggle id="atr_tp_sl" title="ATR Tabanlı Dinamik TP/SL" desc="Volatiliteye göre hedef ve stop; sabit % yerine ATR çarpanı" checked={c.atr_tp_sl} onChange={(v) => set("atr_tp_sl", v)} />
+            <div className="grid grid-cols-2 gap-2">
+              <Field id="atr_tp_mult" label="ATR × TP" value={c.atr_tp_mult} onChange={(v) => set("atr_tp_mult", v)} step="0.1" />
+              <Field id="atr_sl_mult" label="ATR × SL" value={c.atr_sl_mult} onChange={(v) => set("atr_sl_mult", v)} step="0.1" />
+            </div>
+            <Toggle id="partial_tp" title="Kısmi Kâr Alma" desc="TP'nin yarısında pozisyonun bir kısmı kapanır, SL girişe çekilir" checked={c.partial_tp} onChange={(v) => set("partial_tp", v)} />
+            <div className="grid grid-cols-3 gap-2">
+              <Field id="partial_tp_fraction" label="Kısmi Oran" value={c.partial_tp_fraction} onChange={(v) => set("partial_tp_fraction", v)} step="0.1" />
+              <Field id="daily_loss_limit_pct" label="Günlük Zarar Limiti" value={c.daily_loss_limit_pct} onChange={(v) => set("daily_loss_limit_pct", v)} step="0.5" suffix="%" />
+              <Field id="blacklist_losses" label="Kara Liste (ardışık zarar)" value={c.blacklist_losses} onChange={(v) => set("blacklist_losses", v)} step="1" />
+            </div>
+            <Field id="blacklist_minutes" label="Kara Liste Süresi" value={c.blacklist_minutes} onChange={(v) => set("blacklist_minutes", v)} step="10" suffix="dk" />
+          </TabsContent>
+          <TabsContent value="filters" className="m-0 space-y-3">
+            <Toggle id="htf_trend" title="15m Trend Filtresi" desc="Üst zaman dilimi EMA trendine ters işlem açılmaz" checked={c.filters?.htf_trend} onChange={(v) => setF("htf_trend", v)} />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase tracking-wider text-zinc-500">Üst Zaman Dilimi</Label>
+                <div className="grid grid-cols-3 gap-1">
+                  {["5m", "15m", "1h"].map((tf) => (
+                    <button key={tf} data-testid={`cfg-htf-${tf}`} onClick={() => setF("htf_timeframe", tf)} className={`h-8 text-[11px] rounded-sm border transition-colors ${c.filters?.htf_timeframe === tf ? "border-[#00F0FF]/60 bg-[#00F0FF]/10 text-[#00F0FF]" : "border-white/10 text-zinc-400 hover:bg-white/5"}`}>{tf}</button>
+                  ))}
+                </div>
+              </div>
+              <Field id="htf_ema" label="Trend EMA" value={c.filters?.htf_ema} onChange={(v) => setF("htf_ema", v)} step="1" />
+              <Field id="adx_min" label="Min. ADX (0 = kapalı)" value={c.filters?.adx_min} onChange={(v) => setF("adx_min", v)} step="1" />
+              <Field id="volume_min_ratio" label="Min. Hacim Oranı (0 = kapalı)" value={c.filters?.volume_min_ratio} onChange={(v) => setF("volume_min_ratio", v)} step="0.1" suffix="x" />
+            </div>
+            <p className="text-[10px] text-zinc-500 leading-relaxed">ADX 20 altı = yatay piyasa, sinyal reddedilir. Hacim oranı = son mumun hacmi / 20 mum ortalaması; düşük hacimli sinyaller sahte kırılım riski taşır. Engellenen sinyaller tarayıcıda sarı renkle gösterilir.</p>
           </TabsContent>
           <TabsContent value="indicators" className="m-0 grid grid-cols-2 gap-2">
             <Field id="rsi_period" label="RSI Periyot" value={c.indicators.rsi_period} onChange={(v) => setInd("rsi_period", v)} step="1" />

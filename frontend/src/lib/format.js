@@ -19,7 +19,8 @@ export const fmtTime = (iso) =>
 export const fmtDuration = (sec) => {
   if (sec < 60) return `${sec}sn`;
   if (sec < 3600) return `${Math.floor(sec / 60)}dk ${sec % 60}sn`;
-  return `${Math.floor(sec / 3600)}sa ${Math.floor((sec % 3600) / 60)}dk`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}sa ${Math.floor((sec % 3600) / 60)}dk`;
+  return `${Math.floor(sec / 86400)}g ${Math.floor((sec % 86400) / 3600)}sa ${Math.floor((sec % 3600) / 60)}dk`;
 };
 
 export const pnlClass = (n) => (n > 0 ? "text-profit" : n < 0 ? "text-loss" : "text-zinc-400");

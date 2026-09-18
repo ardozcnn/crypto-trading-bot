@@ -42,7 +42,7 @@ class MarketData:
                 }
         return self.tickers
 
-    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 150) -> list[dict]:
+    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 150, store: bool = True) -> list[dict]:
         r = await self.client.get(
             "/fapi/v1/klines", params={"symbol": symbol, "interval": interval, "limit": limit}
         )
@@ -51,7 +51,8 @@ class MarketData:
             {"t": k[0], "o": float(k[1]), "h": float(k[2]), "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
             for k in r.json()
         ]
-        self.klines[symbol] = data
+        if store:
+            self.klines[symbol] = data
         return data
 
     async def close(self):
