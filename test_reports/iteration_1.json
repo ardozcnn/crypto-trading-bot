@@ -1,0 +1,22 @@
+{
+  "summary": "Comprehensive backend + frontend testing for Binance Futures Testnet paper-trading bot. All 5 backend pytest tests passed (status shape with by_strategy/uptime/protection, market signals shape incl. adx/vol_ratio/htf_trend/blocked/blacklisted, config GET/PUT/restore, logs no-error + bot running). Frontend PerformancePanel, ControlPanel Filtreler/Risk tabs, SignalsPanel all render with expected data-testids and Turkish content. Save flow works: 'Ayarlar kaydedildi' toast displayed, adx_min persisted 20→22 then restored to 20 via API. Bot left running, config restored to original values (adx_min=20, atr_tp_mult=1.5, daily_loss_limit_pct=3).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_bot_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ETH signal showed vol_ratio=0.1 during test (low boundary); this is realistic market data but worth monitoring - if vol_min_ratio=0.8, ETH multi entries would be blocked most of the time. Not a bug.",
+    "Note: on test run signal-state for open positions displays like '● SHORT AÇIK' (contains 'AÇIK'), matches spec."
+  ],
+  "updated_files": ["/app/backend/tests/test_bot_api.py"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100%"},
+  "seed_data_creation": "None. Did NOT call POST /api/bot/reset. Config restored to originals.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend URL: REACT_APP_BACKEND_URL. Pytest file at /app/backend/tests/test_bot_api.py (run with: pytest backend/tests/test_bot_api.py -v). Bot is running, adx_min=20, atr_tp_mult=1.5, daily_loss_limit_pct=3. Do NOT hit /api/bot/reset - 12 days of trade history.",
+  "rca of the issue": "N/A - no failures"
+}
