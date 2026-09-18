@@ -1,0 +1,26 @@
+{
+  "summary": "Tested new backtest, daily report, and live testnet features. All 9 backend pytest tests PASS (backtest status shape with candles>200k, backtest run + 409 dedupe + poll to done, daily report sorted newest-first with cumulative == pnl on oldest, live status flow with fake 25-char creds returning 400+'doğrulanamadı' and configured=true after, live mode rejected without valid creds, /api/bot/config mode field ignored, DELETE cleanup restoring configured=false, short-key 422, bot still running). Frontend: mode-label 'PAPER · FUTURES TESTNET' correct, tab-daily shows 5 daily-row-* entries, tab-backtest renders backtest-panel with all bt-* metrics, svg chart, verdict, symbols; run button triggers 'Backtest başlatıldı' toast and backtest-progress; results reappear when done. cfg-tab-live shows live-settings, live-mode-live-button disabled, live-save-button disabled until 20+ chars, error toast contains 'doğrulanamadı'. Regression tabs (positions/trades/equity) still render. BUG FOUND: after failed save (400 with saved-but-invalid creds), the frontend does NOT refresh state, so live-credentials-box / live-key-masked / live-delete-button never appear even though backend now has configured=true. Cleanup performed via DELETE /api/live/credentials -> configured=false confirmed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "LiveSettings", "issue": "act() catch branch shows error toast but does not call load(); when POST /api/live/credentials returns 400 'Anahtar kaydedildi ama doğrulanamadı', backend still marks configured=true but UI keeps showing live-credentials-form instead of live-credentials-box. Spec requires the credentials-box (with live-key-masked + live-delete-button) to appear after this error.", "selector": "[data-testid=live-credentials-box]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_new_features.py", "/app/backend/tests/test_bot_api.py", "/app/test_reports/pytest/pytest_iter2.xml"],
+  "action_items": [
+    "Fix /app/frontend/src/components/LiveSettings.jsx: in act() catch block also call `await load()` (or always in a finally) so UI refreshes to credentials-box after 'kaydedildi ama doğrulanamadı' 400 response."
+  ],
+  "critical_code_review_comments": [
+    "LiveSettings.act(): success path calls load() but error path does not; this hides the fact that credentials were persisted despite validation failure. Simple fix: call load() in both branches (or in finally).",
+    "Backend correctly handles all new endpoints; live credentials properly encrypted, 409 dedupe on backtest works, /api/bot/config correctly ignores 'mode' field."
+  ],
+  "updated_files": ["/app/backend/tests/test_new_features.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "90% (1 UX bug in LiveSettings save-error refresh)"},
+  "seed_data_creation": "None. Fake credentials were saved during testing and then explicitly DELETED (verified via /api/live/status configured=false). Bot left running.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New pytest file at /app/backend/tests/test_new_features.py (9 tests, ~14s). After main agent fixes the LiveSettings load() on error, re-run only the frontend live-credentials-box flow. Do NOT hit /api/bot/reset. If retesting live save, always DELETE /api/live/credentials at the end.",
+  "rca of the issue": "LiveSettings.jsx line 18-30: act() calls load() only after successful fn(). On backend 400 (saved-but-invalid), the exception is caught, error toast shown, but state st (with old configured=false) is not refreshed -- so the {st.configured ? credentials-box : credentials-form} ternary keeps rendering the form. Fix: move `await load()` into a finally block or add it in the catch branch."
+}

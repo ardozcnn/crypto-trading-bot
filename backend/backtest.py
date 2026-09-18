@@ -56,6 +56,14 @@ class Backtester:
                         trades += await asyncio.to_thread(simulate_symbol, s, k, vcfg)
                 trades.sort(key=lambda t: t["closed_at"])
                 result["variants"][name] = summarize(trades, float(cfg["initial_balance"]))
+            gtrades = []
+            for s in cfg["grid"]["symbols"]:
+                k = hist.get(s) or await self.fetch_history(s, days)
+                if len(k) > 200:
+                    gtrades += await asyncio.to_thread(simulate_grid, s, k, cfg)
+            gtrades.sort(key=lambda t: t["closed_at"])
+            result["variants"]["grid"] = summarize(gtrades, float(cfg["initial_balance"]))
+            result["grid_symbols"] = cfg["grid"]["symbols"]
             result["duration_sec"] = round(time.time() - t0, 1)
             await self.db.backtests.insert_one(dict(result))
             self.state.update(status="done", result=result)
@@ -190,6 +198,71 @@ def simulate_symbol(symbol: str, klines: list[dict], cfg: dict) -> list[dict]:
             tp_dist = max(tp_dist, sl_dist * 1.2)
         pos = {"id": f"{symbol}-{t}", "side": sig["side"], "entry": c, "qty": margin_full * lev / c, "margin": margin_full,
                "tp": c + tp_dist * d, "sl": c - sl_dist * d, "tsl": None, "peak": c, "t": t, "partial": False}
+    return trades
+
+
+def htf_series(klines: list[dict], cfg: dict) -> tuple[list, list]:
+    """Per-1m-candle HTF trend label and HTF ADX (only completed HTF bars)."""
+    f = cfg["filters"]
+    df = pd.DataFrame(klines)
+    ts = pd.to_datetime(df["t"], unit="ms")
+    tf = {"5m": "5min", "15m": "15min", "1h": "1h"}.get(f.get("htf_timeframe", "15m"), "15min")
+    key = ts.dt.floor(tf)
+    g = df.groupby(key)
+    h = pd.DataFrame({"o": g["o"].first(), "h": g["h"].max(), "l": g["l"].min(), "c": g["c"].last()})
+    e = indicators.ema(h["c"], f.get("htf_ema", 50))
+    slope = (e - e.shift(3)) / e.shift(3) * 100
+    trend = pd.Series(np.where((h["c"] > e) & (slope > -0.02), "UP", np.where((h["c"] < e) & (slope < 0.02), "DOWN", "FLAT")), index=h.index).shift(1)
+    hadx = indicators.adx(h, 14).shift(1)
+    return trend.reindex(key).ffill().tolist(), hadx.reindex(key).ffill().fillna(0).tolist()
+
+
+def simulate_grid(symbol: str, klines: list[dict], cfg: dict) -> list[dict]:
+    g, lev, fee = cfg["grid"], cfg["leverage"], cfg["fee_pct"] / 100
+    margin = float(cfg["initial_balance"]) * g["size_pct"] / 100
+    trend_filter, adx_pause = g.get("trend_filter", False), g.get("adx_pause", 0)
+    trend, hadx = htf_series(klines, cfg) if (trend_filter or adx_pause) else ([None] * len(klines), [0] * len(klines))
+    trades, open_pos = [], {}
+    center, levels, step, band = None, None, 0.0, 0.0
+    atr = indicators.atr(pd.DataFrame(klines), 14).tolist() if g.get("atr_spacing_mult") else None
+    prev_c = klines[0]["c"]
+    for i in range(1, len(klines)):
+        k = klines[i]
+        t, h, l, c = k["t"], k["h"], k["l"], k["c"]
+        if center is None or (not open_pos and abs(c - center) / center > band):
+            center = c
+            spacing = g["spacing_pct"]
+            if atr and atr[i] and not np.isnan(atr[i]):
+                spacing = max(g["spacing_pct"], atr[i] / c * 100 * g["atr_spacing_mult"])
+            step = spacing / 100
+            band = (g["levels"] + 2) * spacing / 100
+            levels = strategies.grid_levels(center, g["levels"], spacing)
+            prev_c = c
+            continue
+        for key, pos in list(open_pos.items()):
+            long = pos["side"] == "LONG"
+            d = 1 if long else -1
+            hit_sl = l <= pos["sl"] if long else h >= pos["sl"]
+            hit_tp = h >= pos["tp"] if long else l <= pos["tp"]
+            if hit_sl or hit_tp:
+                px, reason = (pos["sl"], "STOP LOSS") if hit_sl else (pos["tp"], "TAKE PROFIT")
+                net = (px - pos["entry"]) * pos["qty"] * d - px * pos["qty"] * fee - pos["entry"] * pos["qty"] * fee
+                trades.append(_trade(symbol, pos, px, net, margin, t, reason))
+                del open_pos[key]
+        paused = adx_pause and hadx[i] > adx_pause
+        allow_long = not paused and (not trend_filter or trend[i] != "DOWN")
+        allow_short = not paused and (not trend_filter or trend[i] != "UP")
+        if allow_long:
+            for j, lvl in enumerate(levels["buy"]):
+                key = f"B{j}"
+                if key not in open_pos and prev_c > lvl >= l:
+                    open_pos[key] = {"id": f"{symbol}-{key}-{t}", "side": "LONG", "entry": lvl, "qty": margin * lev / lvl, "tp": lvl * (1 + step), "sl": center * (1 - band), "t": t}
+        if allow_short:
+            for j, lvl in enumerate(levels["sell"]):
+                key = f"S{j}"
+                if key not in open_pos and prev_c < lvl <= h:
+                    open_pos[key] = {"id": f"{symbol}-{key}-{t}", "side": "SHORT", "entry": lvl, "qty": margin * lev / lvl, "tp": lvl * (1 - step), "sl": center * (1 + band), "t": t}
+        prev_c = c
     return trades
 
 

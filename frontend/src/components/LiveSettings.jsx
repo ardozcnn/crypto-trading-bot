@@ -24,6 +24,7 @@ export const LiveSettings = ({ onChange }) => {
       onChange?.();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "İşlem başarısız");
+      await load();
     } finally {
       setBusy(false);
     }

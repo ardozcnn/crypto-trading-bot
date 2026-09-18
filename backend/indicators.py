@@ -61,7 +61,7 @@ def htf_trend(klines: list[dict], ema_period: int = 50) -> dict:
         trend = "DOWN"
     else:
         trend = "FLAT"
-    return {"trend": trend, "ema": last, "close": close, "slope_pct": round(slope_pct, 4)}
+    return {"trend": trend, "ema": last, "close": close, "slope_pct": round(slope_pct, 4), "adx": round(float(adx(df, 14).iloc[-1]), 2)}
 
 
 def compute(klines: list[dict], p: dict) -> dict:

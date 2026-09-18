@@ -12,7 +12,7 @@ logger = logging.getLogger("engine")
 
 DEFAULT_CONFIG = {
     "mode": "paper",
-    "strategy": "both",
+    "strategy": "grid",
     "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"],
     "timeframe": "1m",
     "leverage": 10,
@@ -41,7 +41,11 @@ DEFAULT_CONFIG = {
         "bb_period": 20, "bb_std": 2.0,
         "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
     },
-    "grid": {"levels": 6, "spacing_pct": 0.25, "size_pct": 2.5, "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]},
+    "grid": {
+        "levels": 4, "spacing_pct": 0.5, "size_pct": 2.5,
+        "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"],
+        "trend_filter": True, "adx_pause": 35.0, "atr_spacing_mult": 1.5,
+    },
     "initial_balance": 10000.0,
     "fee_pct": 0.04,
 }
@@ -492,32 +496,44 @@ class BotEngine:
         if cfg["strategy"] not in ("grid", "both"):
             return
         g = cfg["grid"]
+        trend_filter = g.get("trend_filter", False)
+        adx_pause = float(g.get("adx_pause", 0) or 0)
+        atr_mult = float(g.get("atr_spacing_mult", 0) or 0)
         for symbol in g["symbols"]:
             price = prices.get(symbol)
             if not price:
                 continue
+            htf = self.htf.get(symbol) or {}
+            sig = self.signals.get(symbol) or {}
+            htf_trend, htf_adx = htf.get("trend"), float(htf.get("adx", 0) or 0)
+            paused = adx_pause and htf_adx > adx_pause
+            allow_long = not paused and (not trend_filter or htf_trend != "DOWN")
+            allow_short = not paused and (not trend_filter or htf_trend != "UP")
+            spacing = g["spacing_pct"]
+            if atr_mult and sig.get("atr"):
+                spacing = max(spacing, sig["atr"] / price * 100 * atr_mult)
             state = self.grids.get(symbol)
             open_grid = [p for p in self.positions.values() if p["symbol"] == symbol and p["strategy"] == "grid"]
-            band = (g["levels"] + 2) * g["spacing_pct"] / 100
+            band = (g["levels"] + 2) * spacing / 100
             if not state or (not open_grid and abs(price - state["center"]) / state["center"] > band):
-                state = {"center": price, "filled": [], **strategies.grid_levels(price, g["levels"], g["spacing_pct"])}
+                state = {"center": price, "filled": [], "spacing": spacing, **strategies.grid_levels(price, g["levels"], spacing)}
                 self.grids[symbol] = state
                 await self.save_state()
-                await self.log("info", f"Grid kuruldu · merkez {price:g} · {g['levels']}x2 seviye · aralık {g['spacing_pct']}%", symbol)
+                await self.log("info", f"Grid kuruldu · merkez {price:g} · {g['levels']}x2 seviye · aralık {spacing:.2f}%", symbol)
                 continue
             prev = self.last_prices.get(symbol, price)
-            step = g["spacing_pct"] / 100
+            step = state.get("spacing", spacing) / 100
             margin = self.balance * g["size_pct"] / 100
             for i, lvl in enumerate(state["buy"]):
                 key = f"B{i}"
-                if key not in state["filled"] and prev > lvl >= price and len(self.positions) < cfg["max_open_positions"]:
+                if allow_long and key not in state["filled"] and prev > lvl >= price and len(self.positions) < cfg["max_open_positions"]:
                     pos = await self.open_position(symbol, "LONG", price, margin, "grid", f"grid alım seviyesi {i + 1}",
                                                    price * (1 + step), state["center"] * (1 - band), key)
                     if pos:
                         state["filled"].append(key)
             for i, lvl in enumerate(state["sell"]):
                 key = f"S{i}"
-                if key not in state["filled"] and prev < lvl <= price and len(self.positions) < cfg["max_open_positions"]:
+                if allow_short and key not in state["filled"] and prev < lvl <= price and len(self.positions) < cfg["max_open_positions"]:
                     pos = await self.open_position(symbol, "SHORT", price, margin, "grid", f"grid satım seviyesi {i + 1}",
                                                    price * (1 - step), state["center"] * (1 + band), key)
                     if pos:
